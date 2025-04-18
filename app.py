@@ -118,9 +118,6 @@ def webhook():
             site_totals[key]['completed_today'] += 1  # Update site-specific totals
             completed_delta = 1
 
-    # Emit updated totals
-    socketio.emit('totals', order_totals)
-
     # Emit updated per-site data
     socketio.emit('site_data', {
         'name': site['name'],
@@ -128,10 +125,15 @@ def webhook():
         'processing': site_totals[key]['processing'],
         'completed_today': site_totals[key]['completed_today']
     })
+    
+    # Emit updated totals
+    socketio.emit('totals', order_totals)
+
+
 
     return '', 200
 
 
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5001)
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
