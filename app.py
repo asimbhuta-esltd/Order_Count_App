@@ -24,11 +24,15 @@ site_totals = {site['name']: {'processing': 0, 'completed_today': 0} for site in
 async def fetch_data(site, params):
     url = f"{site['url'].rstrip('/')}/wp-json/wc/v3/orders"
     auth = aiohttp.BasicAuth(site['consumer_key'], site['consumer_secret'])
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, params=params, auth=auth) as resp:
-            data = await resp.json()
-            headers = resp.headers
-    return data, headers
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, auth=auth) as resp:
+                data = await resp.json()
+                headers = resp.headers
+                return data, headers
+    except Exception as e:
+        print(f"Failed fetching data for {site['name']}: {e}")
+        return [], {}
 
 async def count_completed_today(orders):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -125,7 +129,7 @@ def webhook():
         'processing': site_totals[key]['processing'],
         'completed_today': site_totals[key]['completed_today']
     })
-    
+
     # Emit updated totals
     socketio.emit('totals', order_totals)
 
@@ -136,4 +140,7 @@ def webhook():
 
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    import eventlet
+    import eventlet.wsgi
+    socketio.run(app, host='0.0.0.0', port=5001)
+
