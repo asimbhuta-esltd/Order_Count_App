@@ -56,7 +56,7 @@
 <body>
   <div class="container">
     <h1>Order Totals All Sites</h1>
-    <p>{{ current_time }}</p>
+    <p id="clock">{{ current_time }}</p>
     <div class="totals">
         <div id="total-processing">
           <span class="spinner"></span>
@@ -97,10 +97,14 @@
     </table>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
   <script>
     const socket = io();
+      
+    socket.on('time', function(data) {
+          document.getElementById('clock').textContent = data.current_time;
+    });
+    
 
     socket.on('totals', totals => {
         document.getElementById('total-processing').innerHTML = `Processing: ${totals.processing}`;
@@ -117,5 +121,8 @@
     });
 
   </script>
+
+
+
 </body>
 </html>
