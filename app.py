@@ -16,7 +16,7 @@ order_totals = {
 
 @app.route('/')
 def index():
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    current_time = datetime.now().strftime("%H:%M:%S")
     print(f"[INFO] Dashboard accessed at {current_time}")
     return render_template('dashboard.html', sites=config.SITES, current_time=current_time)
 
