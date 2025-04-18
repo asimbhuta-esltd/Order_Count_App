@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 import aiohttp, asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 import config
 
@@ -12,11 +12,12 @@ socketio = SocketIO(app, async_mode='eventlet')
 order_totals = {
     'processing': 0,
     'completed_today': 0,
-    'orders_today': 0
+    'orders_today': 0,
+    'orders_yesterday': 0  # Add a new key for yesterday's orders
 }
 
 # In-memory site-specific totals
-site_totals = {site['name']: {'processing': 0, 'completed_today': 0, 'orders_today': 0} for site in config.SITES}
+site_totals = {site['name']: {'processing': 0, 'completed_today': 0, 'orders_today': 0, 'orders_yesterday': 0} for site in config.SITES}
 
 async def fetch_data(site, params):
     url = f"{site['url'].rstrip('/')}/wp-json/wc/v3/orders"
@@ -51,38 +52,60 @@ async def count_orders_today(orders):
             count += 1
     return count
 
+async def count_orders_yesterday(orders):
+    yesterday = (datetime.now(pytz.timezone('Europe/London')) - timedelta(days=1)).strftime("%Y-%m-%d")
+    count = 0
+    for o in orders or []:
+        dc = o.get('date_created')
+        status = o.get('status', '')
+        # Only count orders that are not cancelled or pending payment
+        if dc and dc.startswith(yesterday) and status not in ['cancelled', 'pending']:
+            count += 1
+    return count
+
 async def initial_fetch():
     """Fetch all sites, emit totals and per‑site data."""
     global order_totals
     today = datetime.now(pytz.timezone('Europe/London')).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(pytz.timezone('Europe/London')) - timedelta(days=1)).strftime("%Y-%m-%d")
     tasks = []
     for site in config.SITES:
         tasks.append(fetch_data(site, {'status': 'processing', 'per_page': 1}))
         tasks.append(fetch_data(site, {'status': 'completed', 'per_page': 100}))
-        tasks.append(fetch_data(site, {'after': f'{today}T00:00:00', 'per_page': 100}))  # new!
+        tasks.append(fetch_data(site, {'after': f'{today}T00:00:00', 'per_page': 100}))  # Today's orders
+        tasks.append(fetch_data(site, {'after': f'{yesterday}T00:00:00', 'per_page': 100}))  # Yesterday's orders
     results = await asyncio.gather(*tasks)
 
-    order_totals = {'processing': 0, 'completed_today': 0, 'orders_today': 0}
+    order_totals = {'processing': 0, 'completed_today': 0, 'orders_today': 0, 'orders_yesterday': 0}
     idx = 0
     for site in config.SITES:
         proc_data, proc_headers = results[idx]; idx += 1
         comp_data, _ = results[idx]; idx += 1
         today_data, _ = results[idx]; idx += 1
+        yesterday_data, _ = results[idx]; idx += 1
 
         proc_count = int(proc_headers.get('X-Wp-Total', 0))
         comp_count = await count_completed_today(comp_data)
         today_count = await count_orders_today(today_data)
+        yesterday_count = await count_orders_yesterday(yesterday_data)
 
         order_totals['processing'] += proc_count
         order_totals['completed_today'] += comp_count
         order_totals['orders_today'] += today_count
+        order_totals['orders_yesterday'] += yesterday_count
+
+        site_totals[site['name']]['processing'] = proc_count
+        site_totals[site['name']]['completed_today'] = comp_count
+        site_totals[site['name']]['orders_today'] = today_count
+        site_totals[site['name']]['orders_yesterday'] = yesterday_count
 
         socketio.emit('site_data', {
             'name': site['name'],
             'url': site['url'],
             'processing': proc_count,
             'completed_today': comp_count,
-            'orders_today': today_count
+            'orders_today': today_count,
+            'orders_yesterday': yesterday_count
         })
 
     socketio.emit('totals', order_totals)
@@ -134,7 +157,9 @@ def webhook():
         'name': site['name'],
         'url': site['url'],
         'processing': site_totals[key]['processing'],
-        'completed_today': site_totals[key]['completed_today']
+        'completed_today': site_totals[key]['completed_today'],
+        'orders_today': site_totals[key]['orders_today'],
+        'orders_yesterday': site_totals[key]['orders_yesterday']
     })
 
     # Emit updated totals

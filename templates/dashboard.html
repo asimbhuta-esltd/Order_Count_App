@@ -70,12 +70,16 @@
           <span class="spinner"></span>
           <span>Orders Today: Loading...</span>
         </div>
+        <div id="yesterday-orders">
+          <span class="spinner"></span>
+          <span>Orders Yesterday: Loading...</span>
+        </div>
     </div>
       
       
     <table>
       <thead>
-        <tr><th>Site</th><th>Processing</th><th>Completed Today</th><th>Orders Today</th></tr>
+        <tr><th>Site</th><th>Processing</th><th>Completed Today</th><th>Orders Today</th><th>Yesterday's Orders</th></tr>
       </thead>
       <tbody id="site-rows">
         {% for site in sites %}
@@ -88,6 +92,9 @@
             <span class="spinner"></span>
           </td>
           <td id="today-{{ site.name | replace(' ', '_') }}">
+            <span class="spinner"></span>
+          </td>
+          <td id="yesterday-{{ site.name | replace(' ', '_') }}">
             <span class="spinner"></span>
           </td>
         </tr>
@@ -110,6 +117,7 @@
         document.getElementById('total-processing').innerHTML = `Processing: ${totals.processing}`;
         document.getElementById('total-completed').innerHTML = `Completed Today: ${totals.completed_today}`;
         document.getElementById('total-orders').innerHTML = `Orders Today: ${totals.orders_today}`;
+        document.getElementById('yesterday-orders').innerHTML = `Orders Yesterday: ${totals.orders_yesterday}`;
     });
 
 
@@ -117,7 +125,8 @@
       const key = site.name.replace(/\s+/g,'_');
       document.getElementById(`proc-${key}`).textContent = site.processing;
       document.getElementById(`comp-${key}`).textContent = site.completed_today;
-      document.getElementById(`today-${key}`).textContent = site.orders_today; // NEW
+      document.getElementById(`today-${key}`).textContent = site.orders_today; 
+      document.getElementById(`yesterday-${key}`).textContent = site.orders_yesterday;
     });
 
   </script>
