@@ -14,18 +14,12 @@ order_totals = {
     'orders_today': 0
 }
 
-# In-memory site-specific totals
-site_totals = {site['name']: {'processing': 0, 'completed_today': 0} for site in config.SITES}
-
-# ... (existing functions)
-
 @app.route('/')
 def index():
     """Render the dashboard template and pass the current time."""
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"Current time: {current_time}")  # Debugging print statement
     return render_template('dashboard.html', sites=config.SITES, current_time=current_time)
-
 
 # In-memory site-specific totals
 site_totals = {site['name']: {'processing': 0, 'completed_today': 0} for site in config.SITES}
