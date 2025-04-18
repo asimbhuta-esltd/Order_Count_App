@@ -24,6 +24,7 @@ MarkupSafe==3.0.2
 multidict==6.4.3
 packaging==24.2
 propcache==0.3.1
+python-dotenv==1.1.0
 python-engineio==4.12.0
 python-socketio==5.13.0
 requests==2.32.3
