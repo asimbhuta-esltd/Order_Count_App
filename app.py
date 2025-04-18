@@ -121,8 +121,6 @@ def webhook():
             order_totals['completed_today'] += 1
             site_totals[key]['completed_today'] += 1  # Update site-specific totals
             completed_delta = 1
-
-    print(f"Emitting site data for {site['name']} - Processing: {proc_count}, Completed Today: {comp_count}, Orders Today: {today_count}")
     
     # Emit updated per-site data
     socketio.emit('site_data', {
