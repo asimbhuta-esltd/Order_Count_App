@@ -16,8 +16,7 @@ order_totals = {
 }
 
 # In-memory site-specific totals
-site_totals = {site['name']: {'processing': 0, 'completed_today': 0} for site in config.SITES}
-
+site_totals = {site['name']: {'processing': 0, 'completed_today': 0, 'orders_today': 0} for site in config.SITES}
 
 async def fetch_data(site, params):
     url = f"{site['url'].rstrip('/')}/wp-json/wc/v3/orders"
@@ -32,10 +31,8 @@ async def fetch_data(site, params):
         print(f"Failed fetching data for {site['name']}: {e}")
         return [], {}
 
-
 async def count_completed_today(orders):
-    london_time = datetime.now(pytz.timezone('Europe/London'))
-    today = london_time.strftime("%Y-%m-%d")
+    today = datetime.now(pytz.timezone('Europe/London')).strftime("%Y-%m-%d")
     count = 0
     for o in orders or []:
         dc = o.get('date_completed')
@@ -43,20 +40,26 @@ async def count_completed_today(orders):
             count += 1
     return count
 
+async def count_orders_today(orders):
+    today = datetime.now(pytz.timezone('Europe/London')).strftime("%Y-%m-%d")
+    count = 0
+    for o in orders or []:
+        dc = o.get('date_created')
+        status = o.get('status', '')
+        # Only count orders that are not cancelled or pending payment
+        if dc and dc.startswith(today) and status not in ['cancelled', 'pending']:
+            count += 1
+    return count
 
 async def initial_fetch():
+    """Fetch all sites, emit totals and per‑site data."""
     global order_totals
-    london_time = datetime.now(pytz.timezone('Europe/London'))
-    today = london_time.strftime("%Y-%m-%d")
+    today = datetime.now(pytz.timezone('Europe/London')).strftime("%Y-%m-%d")
     tasks = []
     for site in config.SITES:
         tasks.append(fetch_data(site, {'status': 'processing', 'per_page': 1}))
         tasks.append(fetch_data(site, {'status': 'completed', 'per_page': 100}))
-        tasks.append(fetch_data(site, {
-            'status': 'completed',
-            'after': f'{today}T00:00:00',
-            'per_page': 100
-        }))
+        tasks.append(fetch_data(site, {'after': f'{today}T00:00:00', 'per_page': 100}))  # new!
     results = await asyncio.gather(*tasks)
 
     order_totals = {'processing': 0, 'completed_today': 0, 'orders_today': 0}
@@ -68,14 +71,11 @@ async def initial_fetch():
 
         proc_count = int(proc_headers.get('X-Wp-Total', 0))
         comp_count = await count_completed_today(comp_data)
-        today_count = len(today_data or [])
+        today_count = await count_orders_today(today_data)
 
         order_totals['processing'] += proc_count
         order_totals['completed_today'] += comp_count
         order_totals['orders_today'] += today_count
-
-        site_totals[site['name']]['processing'] = proc_count
-        site_totals[site['name']]['completed_today'] = comp_count
 
         socketio.emit('site_data', {
             'name': site['name'],
@@ -85,64 +85,51 @@ async def initial_fetch():
             'orders_today': today_count
         })
 
-    # Emit totals
     socketio.emit('totals', order_totals)
-
-    # Emit current time
-    now = london_time.strftime('%Y-%m-%d %H:%M:%S')
-    socketio.emit('time', {'current_time': now})
 
 
 @socketio.on('connect')
 def on_connect():
     socketio.start_background_task(lambda: asyncio.run(initial_fetch()))
-    socketio.start_background_task(time_updater)
-
-
-async def time_updater():
-    while True:
-        await asyncio.sleep(30)
-        london_time = datetime.now(pytz.timezone('Europe/London'))
-        now = london_time.strftime('%Y-%m-%d %H:%M:%S')
-        socketio.emit('time', {'current_time': now})
-
 
 @app.route('/')
 def index():
-    london_time = datetime.now(pytz.timezone('Europe/London'))
-    now = london_time.strftime('%Y-%m-%d %H:%M:%S')
-    return render_template('dashboard.html', sites=config.SITES, current_time=now)
-
+    # Pass the static list of sites into the template
+    current_time = datetime.now(pytz.timezone('Europe/London')).strftime('%Y-%m-%d %H:%M:%S')
+    return render_template('dashboard.html', sites=config.SITES, current_time=current_time)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json or {}
     status = data.get('status', '')
-    site_url = request.headers.get('X-Wc-Webhook-Source', '')
-    if not site_url:
-        return '', 400
+    site_url = request.headers.get('X-Wc-Webhook-Source', '')  # WooCommerce sends this header
 
+    if not site_url:
+        return '', 400  # We need this to identify which site sent it
+
+    # Find the site from config.SITES based on the URL
     site = next((s for s in config.SITES if s['url'].rstrip('/') == site_url.rstrip('/')), None)
     if not site:
-        return '', 404
+        return '', 404  # Unknown site
 
-    key = site['name']
+    key = site['name']  # for matching config.SITES
+
+    # Find and emit site-specific updates
     processing_delta = 0
     completed_delta = 0
 
     if status == 'processing':
         order_totals['processing'] += 1
-        site_totals[key]['processing'] += 1
+        site_totals[key]['processing'] += 1  # Update site-specific totals
         processing_delta = 1
     elif status == 'completed':
-        london_time = datetime.now(pytz.timezone('Europe/London'))
         dc = data.get('date_completed', '')
-        if dc.startswith(london_time.strftime("%Y-%m-%d")):
+        if dc.startswith(datetime.now(pytz.timezone('Europe/London')).strftime("%Y-%m-%d")):
             order_totals['completed_today'] += 1
-            order_totals['orders_today'] += 1
-            site_totals[key]['completed_today'] += 1
+            site_totals[key]['completed_today'] += 1  # Update site-specific totals
             completed_delta = 1
-
+    
+    # Emit updated per-site data
     socketio.emit('site_data', {
         'name': site['name'],
         'url': site['url'],
@@ -150,10 +137,10 @@ def webhook():
         'completed_today': site_totals[key]['completed_today']
     })
 
+    # Emit updated totals
     socketio.emit('totals', order_totals)
 
     return '', 200
-
 
 if __name__ == '__main__':
     import eventlet
