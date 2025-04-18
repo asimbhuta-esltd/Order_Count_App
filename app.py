@@ -17,6 +17,18 @@ order_totals = {
 # In-memory site-specific totals
 site_totals = {site['name']: {'processing': 0, 'completed_today': 0} for site in config.SITES}
 
+# ... (existing functions)
+
+@app.route('/')
+def index():
+    """Render the dashboard template and pass the current time."""
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Get current time in the desired format
+    return render_template('dashboard.html', sites=config.SITES, current_time=current_time)
+
+
+# In-memory site-specific totals
+site_totals = {site['name']: {'processing': 0, 'completed_today': 0} for site in config.SITES}
+
 async def fetch_data(site, params):
     """Fetch data from WooCommerce API."""
     url = f"{site['url'].rstrip('/')}/wp-json/wc/v3/orders"
