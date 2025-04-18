@@ -161,15 +161,6 @@ def webhook():
 
     return '', 200
 
-@app.route('/')
-def index():
-    """Render the dashboard template and pass the current time."""
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"Current time: {current_time}")  # Debugging print statement
-    return render_template('dashboard.html', sites=config.SITES, current_time=current_time)
-
-
-
 if __name__ == '__main__':
     import eventlet
     import eventlet.wsgi
