@@ -41,6 +41,16 @@ async def count_completed_today(orders):
             count += 1
     return count
 
+async def count_orders_today(orders):
+    """Count all orders created today, regardless of their status."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    count = 0
+    for order in orders or []:
+        dc = order.get('date_created')
+        if dc and dc.startswith(today):  # Ensure date_created matches today's date
+            count += 1
+    return count
+
 async def initial_fetch():
     """Fetch all sites, emit totals and per-site data."""
     global order_totals
@@ -55,11 +65,10 @@ async def initial_fetch():
             'after': f'{today}T00:00:00',  # Only orders created today
             'per_page': 100
         }))
-        # Fetch processing orders (we can assume they are paid since this is the criteria)
+        # Fetch all processing orders, regardless of date
         tasks.append(fetch_data(site, {
             'status': 'processing',
             'payment_status': 'paid',
-            'after': f'{today}T00:00:00',  # Only orders created today
             'per_page': 100
         }))
     
@@ -74,20 +83,23 @@ async def initial_fetch():
         
         # Count the number of completed orders today
         completed_today_count = await count_completed_today(completed_data)
-        processing_today_count = len(processing_data)  # Processing orders
+        # Count all processing orders regardless of the date
+        processing_count = len(processing_data or [])
+        # Count all orders created today, regardless of status
+        orders_today_count = await count_orders_today(completed_data + processing_data)
 
         # Update the totals for today
         order_totals['completed_today'] += completed_today_count
-        order_totals['processing'] += processing_today_count
-        order_totals['orders_today'] += completed_today_count + processing_today_count  # Total orders today
+        order_totals['processing'] += processing_count
+        order_totals['orders_today'] += orders_today_count  # Total orders today
 
         # Emit updated per-site data
         socketio.emit('site_data', {
             'name': site['name'],
             'url': site['url'],
-            'processing': processing_today_count,
+            'processing': processing_count,
             'completed_today': completed_today_count,
-            'orders_today': completed_today_count + processing_today_count
+            'orders_today': orders_today_count
         })
 
     # Emit global totals
