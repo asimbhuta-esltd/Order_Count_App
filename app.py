@@ -13,12 +13,7 @@ order_totals = {
     'completed_today': 0,
     'orders_today': 0
 }
-
-@app.route('/')
-def index():
-    current_time = datetime.now().strftime("%H:%M:%S")
-    print(f"[INFO] Dashboard accessed at {current_time}")
-    return render_template('dashboard.html', sites=config.SITES, current_time=current_time)
+    
 
 # In-memory site-specific totals
 site_totals = {site['name']: {'processing': 0, 'completed_today': 0} for site in config.SITES}
@@ -118,7 +113,9 @@ def on_connect():
 @app.route('/')
 def index():
     """Render the dashboard template."""
-    return render_template('dashboard.html', sites=config.SITES)
+    current_time = datetime.now().strftime("%H:%M:%S")
+    print(f"[INFO] Dashboard accessed at {current_time}")
+    return render_template('dashboard.html', sites=config.SITES, current_time=current_time)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
