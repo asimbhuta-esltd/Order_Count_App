@@ -1,5 +1,3 @@
-# app.py
-
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 import aiohttp, asyncio
@@ -16,10 +14,8 @@ order_totals = {
     'orders_today': 0
 }
 
-
 # In-memory site-specific totals
 site_totals = {site['name']: {'processing': 0, 'completed_today': 0} for site in config.SITES}
-
 
 async def fetch_data(site, params):
     url = f"{site['url'].rstrip('/')}/wp-json/wc/v3/orders"
@@ -48,38 +44,49 @@ async def initial_fetch():
     global order_totals
     today = datetime.now().strftime("%Y-%m-%d")
     tasks = []
+    
     for site in config.SITES:
-        tasks.append(fetch_data(site, {'status': 'processing', 'per_page': 1}))
-        tasks.append(fetch_data(site, {'status': 'completed', 'per_page': 100}))
-        tasks.append(fetch_data(site, {'after': f'{today}T00:00:00', 'per_page': 100}))  # new!
+        # Fetch completed and paid orders created today (filter by status and payment)
+        tasks.append(fetch_data(site, {
+            'status': 'completed', 
+            'payment_status': 'paid', 
+            'after': f'{today}T00:00:00',  # Only orders created today
+            'per_page': 100
+        }))
+        # Fetch processing orders (we can assume they are paid since this is the criteria)
+        tasks.append(fetch_data(site, {
+            'status': 'processing', 
+            'payment_status': 'paid', 
+            'after': f'{today}T00:00:00',  # Only orders created today
+            'per_page': 1
+        }))
+    
     results = await asyncio.gather(*tasks)
 
     order_totals = {'processing': 0, 'completed_today': 0, 'orders_today': 0}
     idx = 0
     for site in config.SITES:
-        proc_data, proc_headers = results[idx]; idx += 1
         comp_data, _ = results[idx]; idx += 1
-        today_data, _ = results[idx]; idx += 1
-
-        proc_count = int(proc_headers.get('X-Wp-Total', 0))
-        comp_count = await count_completed_today(comp_data)
-        today_count = len(today_data or [])
-
+        proc_data, _ = results[idx]; idx += 1
+        
+        comp_count = len(comp_data)  # Completed paid orders today
+        proc_count = len(proc_data)  # Processing paid orders today
+        
         order_totals['processing'] += proc_count
         order_totals['completed_today'] += comp_count
-        order_totals['orders_today'] += today_count
+        order_totals['orders_today'] += comp_count + proc_count  # Including processing for today
 
+        # Emit updated per-site data
         socketio.emit('site_data', {
             'name': site['name'],
             'url': site['url'],
             'processing': proc_count,
             'completed_today': comp_count,
-            'orders_today': today_count
+            'orders_today': comp_count + proc_count
         })
 
-
+    # Emit updated totals
     socketio.emit('totals', order_totals)
-
 
 @socketio.on('connect')
 def on_connect():
@@ -89,7 +96,6 @@ def on_connect():
 def index():
     # Pass the static list of sites into the template
     return render_template('dashboard.html', sites=config.SITES)
-
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -133,14 +139,9 @@ def webhook():
     # Emit updated totals
     socketio.emit('totals', order_totals)
 
-
-
     return '', 200
-
-
 
 if __name__ == '__main__':
     import eventlet
     import eventlet.wsgi
     socketio.run(app, host='0.0.0.0', port=5001)
-
