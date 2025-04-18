@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: woocommerce-dashboard
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: gunicorn app:app --worker-class eventlet -w 1
+    envVars:
+      - key: FLASK_ENV
+        value: production
