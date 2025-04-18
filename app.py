@@ -1,11 +1,10 @@
+# app.py
+
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 import aiohttp, asyncio
-from datetime import datetime
-from zoneinfo import ZoneInfo  # Python 3.9+ timezone support
+from datetime import datetime, timezone
 import config
-
-LOCAL_TZ = ZoneInfo("Europe/London")  # ← change to your local timezone
 
 app = Flask(__name__)
 socketio = SocketIO(app, async_mode='eventlet')
@@ -34,32 +33,37 @@ async def fetch_data(site, params):
         print(f"Failed fetching data for {site['name']}: {e}")
         return [], {}
 
+
 async def count_completed_today(orders):
-    today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
-    count = 0
-    for o in orders or []:
-        dc = o.get('date_completed')
-        if dc and dc.startswith(today):
-            count += 1
-    return count
+    today = datetime.now().astimezone().date()
+    return sum(1 for o in orders or [] if o.get('date_completed', '').startswith(str(today)))
+
+
+async def count_created_today(orders):
+    today = datetime.now().astimezone().date()
+    return sum(1 for o in orders or [] if o.get('date_created', '').startswith(str(today)))
+
 
 async def initial_fetch():
     """Fetch all sites, emit totals and per‑site data."""
     global order_totals
-    now = datetime.now(LOCAL_TZ)
-    today_str = now.strftime("%Y-%m-%d")
-    print(f"[{now.strftime('%Y-%m-%d %H:%M:%S')}] Fetching order stats...")
+    now = datetime.now().astimezone()
+    today = now.date()
+    current_time_str = now.strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{current_time_str}] Fetching order stats...")
+    socketio.emit('time_update', {'time': current_time_str})
 
     tasks = []
     for site in config.SITES:
         tasks.append(fetch_data(site, {'status': 'processing', 'per_page': 1}))
         tasks.append(fetch_data(site, {'status': 'completed', 'per_page': 100}))
-        tasks.append(fetch_data(site, {'after': f'{today_str}T00:00:00', 'per_page': 100}))  # today orders
+        tasks.append(fetch_data(site, {'after': f'{today.isoformat()}T00:00:00', 'per_page': 100}))
 
     results = await asyncio.gather(*tasks)
 
     order_totals = {'processing': 0, 'completed_today': 0, 'orders_today': 0}
     idx = 0
+
     for site in config.SITES:
         proc_data, proc_headers = results[idx]; idx += 1
         comp_data, _ = results[idx]; idx += 1
@@ -67,11 +71,14 @@ async def initial_fetch():
 
         proc_count = int(proc_headers.get('X-Wp-Total', 0))
         comp_count = await count_completed_today(comp_data)
-        today_count = len(today_data or [])
+        today_count = await count_created_today(today_data)
 
         order_totals['processing'] += proc_count
         order_totals['completed_today'] += comp_count
         order_totals['orders_today'] += today_count
+
+        site_totals[site['name']]['processing'] = proc_count
+        site_totals[site['name']]['completed_today'] = comp_count
 
         socketio.emit('site_data', {
             'name': site['name'],
@@ -83,13 +90,17 @@ async def initial_fetch():
 
     socketio.emit('totals', order_totals)
 
+
 @socketio.on('connect')
 def on_connect():
     socketio.start_background_task(lambda: asyncio.run(initial_fetch()))
 
+
 @app.route('/')
 def index():
-    return render_template('dashboard.html', sites=config.SITES)
+    current_time = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')
+    return render_template('dashboard.html', sites=config.SITES, current_time=current_time)
+
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -105,7 +116,6 @@ def webhook():
         return '', 404
 
     key = site['name']
-
     processing_delta = 0
     completed_delta = 0
 
@@ -113,9 +123,10 @@ def webhook():
         order_totals['processing'] += 1
         site_totals[key]['processing'] += 1
         processing_delta = 1
+
     elif status == 'completed':
         dc = data.get('date_completed', '')
-        if dc.startswith(datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")):
+        if dc.startswith(datetime.now().astimezone().date().isoformat()):
             order_totals['completed_today'] += 1
             site_totals[key]['completed_today'] += 1
             completed_delta = 1
@@ -128,8 +139,8 @@ def webhook():
     })
 
     socketio.emit('totals', order_totals)
-
     return '', 200
+
 
 if __name__ == '__main__':
     import eventlet
