@@ -18,6 +18,7 @@ order_totals = {
 site_totals = {site['name']: {'processing': 0, 'completed_today': 0} for site in config.SITES}
 
 async def fetch_data(site, params):
+    """Fetch data from WooCommerce API."""
     url = f"{site['url'].rstrip('/')}/wp-json/wc/v3/orders"
     auth = aiohttp.BasicAuth(site['consumer_key'], site['consumer_secret'])
     try:
@@ -31,16 +32,17 @@ async def fetch_data(site, params):
         return [], {}
 
 async def count_completed_today(orders):
+    """Count the completed orders created today."""
     today = datetime.now().strftime("%Y-%m-%d")
     count = 0
-    for o in orders or []:
-        dc = o.get('date_completed')
-        if dc and dc.startswith(today):
+    for order in orders or []:
+        dc = order.get('date_completed')
+        if dc and dc.startswith(today):  # Ensure date_completed matches today's date
             count += 1
     return count
 
 async def initial_fetch():
-    """Fetch all sites, emit totals and per‑site data."""
+    """Fetch all sites, emit totals and per-site data."""
     global order_totals
     today = datetime.now().strftime("%Y-%m-%d")
     tasks = []
@@ -48,17 +50,17 @@ async def initial_fetch():
     for site in config.SITES:
         # Fetch completed and paid orders created today (filter by status and payment)
         tasks.append(fetch_data(site, {
-            'status': 'completed', 
-            'payment_status': 'paid', 
+            'status': 'completed',
+            'payment_status': 'paid',
             'after': f'{today}T00:00:00',  # Only orders created today
             'per_page': 100
         }))
         # Fetch processing orders (we can assume they are paid since this is the criteria)
         tasks.append(fetch_data(site, {
-            'status': 'processing', 
-            'payment_status': 'paid', 
+            'status': 'processing',
+            'payment_status': 'paid',
             'after': f'{today}T00:00:00',  # Only orders created today
-            'per_page': 1
+            'per_page': 100
         }))
     
     results = await asyncio.gather(*tasks)
@@ -66,26 +68,29 @@ async def initial_fetch():
     order_totals = {'processing': 0, 'completed_today': 0, 'orders_today': 0}
     idx = 0
     for site in config.SITES:
-        comp_data, _ = results[idx]; idx += 1
-        proc_data, _ = results[idx]; idx += 1
+        # Unpack results for completed and processing orders
+        completed_data, _ = results[idx]; idx += 1
+        processing_data, _ = results[idx]; idx += 1
         
-        comp_count = len(comp_data)  # Completed paid orders today
-        proc_count = len(proc_data)  # Processing paid orders today
-        
-        order_totals['processing'] += proc_count
-        order_totals['completed_today'] += comp_count
-        order_totals['orders_today'] += comp_count + proc_count  # Including processing for today
+        # Count the number of completed orders today
+        completed_today_count = await count_completed_today(completed_data)
+        processing_today_count = len(processing_data)  # Processing orders
+
+        # Update the totals for today
+        order_totals['completed_today'] += completed_today_count
+        order_totals['processing'] += processing_today_count
+        order_totals['orders_today'] += completed_today_count + processing_today_count  # Total orders today
 
         # Emit updated per-site data
         socketio.emit('site_data', {
             'name': site['name'],
             'url': site['url'],
-            'processing': proc_count,
-            'completed_today': comp_count,
-            'orders_today': comp_count + proc_count
+            'processing': processing_today_count,
+            'completed_today': completed_today_count,
+            'orders_today': completed_today_count + processing_today_count
         })
 
-    # Emit updated totals
+    # Emit global totals
     socketio.emit('totals', order_totals)
 
 @socketio.on('connect')
@@ -94,11 +99,12 @@ def on_connect():
 
 @app.route('/')
 def index():
-    # Pass the static list of sites into the template
+    """Render the dashboard template."""
     return render_template('dashboard.html', sites=config.SITES)
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    """Handle WooCommerce webhooks."""
     data = request.json or {}
     status = data.get('status', '')
     site_url = request.headers.get('X-Wc-Webhook-Source', '')  # WooCommerce sends this header
