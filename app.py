@@ -1,9 +1,7 @@
-# app.py
-
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 import aiohttp, asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 import pytz
 import config
 
@@ -36,35 +34,33 @@ async def fetch_data(site, params):
 
 
 async def count_completed_today(orders):
-    today = datetime.now().astimezone().date()
-    return sum(1 for o in orders or [] if o.get('date_completed', '').startswith(str(today)))
-
-
-async def count_created_today(orders):
-    today = datetime.now().astimezone().date()
-    return sum(1 for o in orders or [] if o.get('date_created', '').startswith(str(today)))
+    london_time = datetime.now(pytz.timezone('Europe/London'))
+    today = london_time.strftime("%Y-%m-%d")
+    count = 0
+    for o in orders or []:
+        dc = o.get('date_completed')
+        if dc and dc.startswith(today):
+            count += 1
+    return count
 
 
 async def initial_fetch():
-    """Fetch all sites, emit totals and per‑site data."""
     global order_totals
-    now = datetime.now().astimezone()
-    today = now.date()
-    current_time_str = now.strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{current_time_str}] Fetching order stats...")
-    socketio.emit('time_update', {'time': current_time_str})
-
+    london_time = datetime.now(pytz.timezone('Europe/London'))
+    today = london_time.strftime("%Y-%m-%d")
     tasks = []
     for site in config.SITES:
         tasks.append(fetch_data(site, {'status': 'processing', 'per_page': 1}))
         tasks.append(fetch_data(site, {'status': 'completed', 'per_page': 100}))
-        tasks.append(fetch_data(site, {'after': f'{today.isoformat()}T00:00:00', 'per_page': 100}))
-
+        tasks.append(fetch_data(site, {
+            'status': 'completed',
+            'after': f'{today}T00:00:00',
+            'per_page': 100
+        }))
     results = await asyncio.gather(*tasks)
 
     order_totals = {'processing': 0, 'completed_today': 0, 'orders_today': 0}
     idx = 0
-
     for site in config.SITES:
         proc_data, proc_headers = results[idx]; idx += 1
         comp_data, _ = results[idx]; idx += 1
@@ -72,7 +68,7 @@ async def initial_fetch():
 
         proc_count = int(proc_headers.get('X-Wp-Total', 0))
         comp_count = await count_completed_today(comp_data)
-        today_count = await count_created_today(today_data)
+        today_count = len(today_data or [])
 
         order_totals['processing'] += proc_count
         order_totals['completed_today'] += comp_count
@@ -89,18 +85,33 @@ async def initial_fetch():
             'orders_today': today_count
         })
 
+    # Emit totals
     socketio.emit('totals', order_totals)
+
+    # Emit current time
+    now = london_time.strftime('%Y-%m-%d %H:%M:%S')
+    socketio.emit('time', {'current_time': now})
 
 
 @socketio.on('connect')
 def on_connect():
     socketio.start_background_task(lambda: asyncio.run(initial_fetch()))
+    socketio.start_background_task(time_updater)
+
+
+async def time_updater():
+    while True:
+        await asyncio.sleep(30)
+        london_time = datetime.now(pytz.timezone('Europe/London'))
+        now = london_time.strftime('%Y-%m-%d %H:%M:%S')
+        socketio.emit('time', {'current_time': now})
 
 
 @app.route('/')
 def index():
-    current_time = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M:%S')
-    return render_template('dashboard.html', sites=config.SITES, current_time=current_time)
+    london_time = datetime.now(pytz.timezone('Europe/London'))
+    now = london_time.strftime('%Y-%m-%d %H:%M:%S')
+    return render_template('dashboard.html', sites=config.SITES, current_time=now)
 
 
 @app.route('/webhook', methods=['POST'])
@@ -108,7 +119,6 @@ def webhook():
     data = request.json or {}
     status = data.get('status', '')
     site_url = request.headers.get('X-Wc-Webhook-Source', '')
-
     if not site_url:
         return '', 400
 
@@ -124,11 +134,12 @@ def webhook():
         order_totals['processing'] += 1
         site_totals[key]['processing'] += 1
         processing_delta = 1
-
     elif status == 'completed':
+        london_time = datetime.now(pytz.timezone('Europe/London'))
         dc = data.get('date_completed', '')
-        if dc.startswith(datetime.now().astimezone().date().isoformat()):
+        if dc.startswith(london_time.strftime("%Y-%m-%d")):
             order_totals['completed_today'] += 1
+            order_totals['orders_today'] += 1
             site_totals[key]['completed_today'] += 1
             completed_delta = 1
 
@@ -140,6 +151,7 @@ def webhook():
     })
 
     socketio.emit('totals', order_totals)
+
     return '', 200
 
 
