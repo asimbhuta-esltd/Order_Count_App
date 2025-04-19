@@ -1,10 +1,9 @@
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 import aiohttp, asyncio
 from datetime import datetime, timedelta
 import pytz
 import config
-import json
 
 app = Flask(__name__)
 socketio = SocketIO(app, async_mode='eventlet')
@@ -14,7 +13,7 @@ order_totals = {
     'processing': 0,
     'completed_today': 0,
     'orders_today': 0,
-    'orders_yesterday': 0
+    'orders_yesterday': 0  # Add a new key for yesterday's orders
 }
 
 # In-memory site-specific totals
@@ -48,6 +47,7 @@ async def count_orders_today(orders):
     for o in orders or []:
         dc = o.get('date_created')
         status = o.get('status', '')
+        # Only count orders that are not cancelled or pending payment
         if dc and dc.startswith(today) and status not in ['cancelled', 'pending']:
             count += 1
     return count
@@ -58,11 +58,13 @@ async def count_orders_yesterday(orders):
     for o in orders or []:
         dc = o.get('date_created')
         status = o.get('status', '')
+        # Only count orders that are not cancelled or pending payment
         if dc and dc.startswith(yesterday) and status not in ['cancelled', 'pending']:
             count += 1
     return count
 
 async def initial_fetch():
+    """Fetch all sites, emit totals and per‑site data."""
     global order_totals
     today = datetime.now(pytz.timezone('Europe/London')).strftime("%Y-%m-%d")
     yesterday = (datetime.now(pytz.timezone('Europe/London')) - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -70,8 +72,8 @@ async def initial_fetch():
     for site in config.SITES:
         tasks.append(fetch_data(site, {'status': 'processing', 'per_page': 1}))
         tasks.append(fetch_data(site, {'status': 'completed', 'per_page': 100}))
-        tasks.append(fetch_data(site, {'after': f'{today}T00:00:00', 'per_page': 100}))
-        tasks.append(fetch_data(site, {'after': f'{yesterday}T00:00:00', 'per_page': 100}))
+        tasks.append(fetch_data(site, {'after': f'{today}T00:00:00', 'per_page': 100}))  # Today's orders
+        tasks.append(fetch_data(site, {'after': f'{yesterday}T00:00:00', 'per_page': 100}))  # Yesterday's orders
     results = await asyncio.gather(*tasks)
 
     order_totals = {'processing': 0, 'completed_today': 0, 'orders_today': 0, 'orders_yesterday': 0}
@@ -108,11 +110,6 @@ async def initial_fetch():
 
     socketio.emit('totals', order_totals)
 
-@app.route('/fetch_data')
-def fetch_data_button():
-    # Trigger data fetch when the button is clicked
-    asyncio.run(initial_fetch())
-    return jsonify({'status': 'success', 'message': 'Data fetched successfully'})
 
 @socketio.on('connect')
 def on_connect():
@@ -120,41 +117,57 @@ def on_connect():
 
 @app.route('/')
 def index():
+    # Pass the static list of sites into the template
     current_time = datetime.now(pytz.timezone('Europe/London')).strftime('%Y-%m-%d %H:%M:%S')
     return render_template('dashboard.html', sites=config.SITES, current_time=current_time)
 
-# Webhook route to handle order updates
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    try:
-        data = request.get_json()
-        print(f"Webhook received: {data}")
-        # Assuming the payload includes the order status change
-        order_id = data.get('id')
-        status = data.get('status')
-        
-        # Update in-memory totals based on the new order status
-        for site in config.SITES:
-            if site['name'] in data.get('site', ''):
-                if status == 'completed':
-                    site_totals[site['name']]['completed_today'] += 1
-                    order_totals['completed_today'] += 1
-                elif status == 'processing':
-                    site_totals[site['name']]['processing'] += 1
-                    order_totals['processing'] += 1
-                elif status in ['cancelled', 'pending']:
-                    # Adjust the totals if the order is cancelled or pending
-                    pass
-                
-                # Emit updated totals to the client
-                socketio.emit('site_data', site_totals[site['name']])
-                socketio.emit('totals', order_totals)
-                break
-    except Exception as e:
-        print(f"Error handling webhook: {e}")
-        return jsonify({'status': 'error', 'message': 'Failed to process webhook'}), 500
+    data = request.json or {}
+    status = data.get('status', '')
+    site_url = request.headers.get('X-Wc-Webhook-Source', '')  # WooCommerce sends this header
 
-    return jsonify({'status': 'success', 'message': 'Webhook processed successfully'}), 200
+    if not site_url:
+        return '', 400  # We need this to identify which site sent it
+
+    # Find the site from config.SITES based on the URL
+    site = next((s for s in config.SITES if s['url'].rstrip('/') == site_url.rstrip('/')), None)
+    if not site:
+        return '', 404  # Unknown site
+
+    key = site['name']  # for matching config.SITES
+
+    # Find and emit site-specific updates
+    processing_delta = 0
+    completed_delta = 0
+
+    if status == 'processing':
+        order_totals['processing'] += 1
+        site_totals[key]['processing'] += 1  # Update site-specific totals
+        processing_delta = 1
+    elif status == 'completed':
+        dc = data.get('date_completed', '')
+        if dc.startswith(datetime.now(pytz.timezone('Europe/London')).strftime("%Y-%m-%d")):
+            order_totals['completed_today'] += 1
+            site_totals[key]['completed_today'] += 1  # Update site-specific totals
+            completed_delta = 1
+    
+    # Emit updated per-site data
+    socketio.emit('site_data', {
+        'name': site['name'],
+        'url': site['url'],
+        'processing': site_totals[key]['processing'],
+        'completed_today': site_totals[key]['completed_today'],
+        'orders_today': site_totals[key]['orders_today'],
+        'orders_yesterday': site_totals[key]['orders_yesterday']
+    })
+
+    # Emit updated totals
+    socketio.emit('totals', order_totals)
+
+    return '', 200
 
 if __name__ == '__main__':
+    import eventlet
+    import eventlet.wsgi
     socketio.run(app, host='0.0.0.0', port=5001)

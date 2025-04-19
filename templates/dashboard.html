@@ -1,3 +1,4 @@
+<!-- templates/dashboard.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,60 +9,40 @@
     body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; }
     .container { width: 90%; max-width: 800px; margin: 20px auto; background: #fff; padding: 20px; border-radius: 8px; }
     h1 { text-align: center; }
-
-    /* Button Style */
-    .fetch-btn {
-      padding: 10px 20px;
-      background-color: #007bff;
-      color: white;
-      font-size: 16px;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      display: block;
-      margin: 20px auto;
-      width: 200px;
-      text-align: center;
-    }
-
-    .fetch-btn:hover {
-      background-color: #0056b3;
-    }
-
     /* Ensure totals box centers content and items don't stretch */
     .totals {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;      /* Vertically center spinner + text */
+    margin-bottom: 20px;
     }
 
     .totals > div {
-      flex: 1;
-      margin: 0 5px;
-      background: #007bff;
-      color: white;
-      padding: 10px;
-      border-radius: 5px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    flex: 1;
+    margin: 0 5px;
+    background: #007bff;
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    display: flex;            /* Use flex here too */
+    align-items: center;      /* Center spinner + text */
+    justify-content: center;
     }
 
     /* Pure‑CSS circular spinner */
     .spinner {
-      display: none;    /* Initially hidden */
-      min-width: 18px;
-      min-height: 18px;
-      margin-right: 8px;
-      border: 3px solid rgba(0, 0, 0, 0.1);
-      border-top: 3px solid #fff;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
+    display: inline-block;    /* Inline so it won’t stretch */
+    min-width: 18px;
+    min-height: 18px;
+    margin-right: 8px;
+    border: 3px solid rgba(0, 0, 0, 0.1);
+    border-top: 3px solid #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
     }
 
     @keyframes spin {
-      to { transform: rotate(360deg); }
+    to { transform: rotate(360deg); }
     }
 
     table { width: 100%; border-collapse: collapse; }
@@ -76,29 +57,26 @@
   <div class="container">
     <h1>Order Totals All Sites</h1>
     <p id="clock">{{ current_time }}</p>
-
-    <!-- Fetch Data Button -->
-    <button class="fetch-btn" id="fetchDataBtn">Fetch Data</button>
-
     <div class="totals">
-      <div id="total-processing">
-        <span class="spinner" id="processingSpinner"></span>
-        <span id="processingText">Processing: Waiting...</span>
-      </div>
-      <div id="total-completed">
-        <span class="spinner" id="completedSpinner"></span>
-        <span id="completedText">Completed Today: Waiting...</span>
-      </div>
-      <div id="total-orders">
-        <span class="spinner" id="ordersSpinner"></span>
-        <span id="ordersText">Orders Today: Waiting...</span>
-      </div>
-      <div id="total-yesterday">
-        <span class="spinner" id="yesterdaySpinner"></span>
-        <span id="yesterdayText">Yesterday's Orders: Waiting...</span>
-      </div>
+        <div id="total-processing">
+          <span class="spinner"></span>
+          <span>Processing: Loading...</span>
+        </div>
+        <div id="total-completed">
+          <span class="spinner"></span>
+          <span>Completed Today: Loading...</span>
+        </div>
+        <div id="total-orders">
+          <span class="spinner"></span>
+          <span>Orders Today: Loading...</span>
+        </div>
+        <div id="yesterday-orders">
+          <span class="spinner"></span>
+          <span>Orders Yesterday: Loading...</span>
+        </div>
     </div>
-
+      
+      
     <table>
       <thead>
         <tr><th>Site</th><th>Processing</th><th>Completed Today</th><th>Orders Today</th><th>Yesterday's Orders</th></tr>
@@ -122,70 +100,38 @@
         </tr>
         {% endfor %}
       </tbody>
+  
     </table>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
   <script>
     const socket = io();
-    const fetchDataBtn = document.getElementById('fetchDataBtn');
-    const processingText = document.getElementById('processingText');
-    const completedText = document.getElementById('completedText');
-    const ordersText = document.getElementById('ordersText');
-    const yesterdayText = document.getElementById('yesterdayText');
-
-    // Toggle spinner visibility based on fetching state
-    function toggleSpinners(isFetching) {
-      const spinners = document.querySelectorAll('.spinner');
-      spinners.forEach(spinner => {
-        spinner.style.display = isFetching ? 'inline-block' : 'none';
-      });
-
-      // Toggle text to show loading state
-      processingText.textContent = isFetching ? 'Processing: Loading...' : 'Processing: Waiting...';
-      completedText.textContent = isFetching ? 'Completed Today: Loading...' : 'Completed Today: Waiting...';
-      ordersText.textContent = isFetching ? 'Orders Today: Loading...' : 'Orders Today: Waiting...';
-      yesterdayText.textContent = isFetching ? "Yesterday's Orders: Loading..." : "Yesterday's Orders: Waiting...";
-    }
-
-    // Fetch data on button click
-    fetchDataBtn.addEventListener('click', function() {
-      toggleSpinners(true);
-      fetch('/fetch_data')
-        .then(response => response.json())
-        .then(data => {
-          console.log('Data fetched:', data);
-          toggleSpinners(false);  // Hide spinners after fetching is done
-        })
-        .catch(error => {
-          console.error('Error fetching data:', error);
-          toggleSpinners(false);
-        });
-    });
-
-    // Listen for time updates
+      
     socket.on('time', function(data) {
-      document.getElementById('clock').textContent = data.current_time;
+          document.getElementById('clock').textContent = data.current_time;
     });
+    
 
-    // Listen for total updates
     socket.on('totals', totals => {
-      document.getElementById('total-processing').innerHTML = `Processing: ${totals.processing}`;
-      document.getElementById('total-completed').innerHTML = `Completed Today: ${totals.completed_today}`;
-      document.getElementById('total-orders').innerHTML = `Orders Today: ${totals.orders_today}`;
-      document.getElementById('total-yesterday').innerHTML = `Yesterday's Orders: ${totals.yesterday_orders}`;
+        document.getElementById('total-processing').innerHTML = `Processing: ${totals.processing}`;
+        document.getElementById('total-completed').innerHTML = `Completed Today: ${totals.completed_today}`;
+        document.getElementById('total-orders').innerHTML = `Orders Today: ${totals.orders_today}`;
+        document.getElementById('yesterday-orders').innerHTML = `Orders Yesterday: ${totals.orders_yesterday}`;
     });
 
-    // Listen for site-specific data
+
     socket.on('site_data', site => {
-      const key = site.name.replace(/\s+/g, '_');
+      const key = site.name.replace(/\s+/g,'_');
       document.getElementById(`proc-${key}`).textContent = site.processing;
       document.getElementById(`comp-${key}`).textContent = site.completed_today;
-      document.getElementById(`today-${key}`).textContent = site.orders_today;
+      document.getElementById(`today-${key}`).textContent = site.orders_today; 
       document.getElementById(`yesterday-${key}`).textContent = site.orders_yesterday;
     });
 
   </script>
+
+
 
 </body>
 </html>
